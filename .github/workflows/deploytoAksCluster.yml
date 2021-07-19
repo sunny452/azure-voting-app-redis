@@ -1,0 +1,50 @@
+on: [push]
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@master
+    
+    - uses: azure/docker-login@v1
+      with:
+        login-server: votingdocker.azurecr.io
+        username: ${{ secrets.acr_votingdocker_username }}
+        password: ${{ secrets.acr_votingdocker_password }}
+    
+    - name: Build and push image to ACR
+      id: build-image
+      run: |
+        docker build "$GITHUB_WORKSPACE/azure-vote" -f  "azure-vote/Dockerfile" -t votingdocker.azurecr.io/votingkubecluster:${{ github.sha }} --label dockerfile-path=azure-vote/Dockerfile
+        docker push votingdocker.azurecr.io/votingkubecluster:${{ github.sha }}
+    
+    - uses: azure/k8s-set-context@v1
+      with:
+         kubeconfig: ${{ secrets.aks_votingkubecluster_kubeConfig }}
+      id: login
+    
+    - name: Create namespace
+      run: |
+        namespacePresent=`kubectl get namespace | grep votingkubecluster9975 | wc -l`
+        if [ $namespacePresent -eq 0 ]
+        then
+            echo `kubectl create namespace votingkubecluster9975`
+        fi
+
+    - uses: azure/k8s-create-secret@v1
+      with:
+        namespace: votingkubecluster9975
+        container-registry-url: votingdocker.azurecr.io
+        container-registry-username: ${{ secrets.acr_votingdocker_username }}
+        container-registry-password: ${{ secrets.acr_votingdocker_password }}
+        secret-name: votingkubecldockerauth
+       
+    - uses: azure/k8s-deploy@v1.2
+      with:
+        namespace: votingkubecluster9975
+        manifests: |
+          manifests/deployment.yml
+          manifests/service.yml
+        images: |
+          votingdocker.azurecr.io/votingkubecluster:${{ github.sha }}
+        imagepullsecrets: |
+          votingkubecldockerauth
